@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.gocache/
+.gomodcache/
+*.db
+*.sqlite
+coverage.out
+.idea/
+.vscode/
