@@ -1,0 +1,4 @@
+import type { EventSummary, MatchResult } from '../types/domain'
+const base = '/api/v1'
+async function request<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(base + path, { headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, ...init }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.message || '请求失败'); return body as T }
+export const api = { events: (page = 0) => request<{ items: EventSummary[]; total: number }>(`/events?page=${page}&limit=20`), matches: (needId: string) => request<{ items: MatchResult[]; statistic: string }>(`/needs/${needId}/matches`), register: (eventId: string, userId: string) => request<EventSummary>(`/events/${eventId}/registrations`, { method: 'POST', headers: { 'X-User-ID': userId } }) }
