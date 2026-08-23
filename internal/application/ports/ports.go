@@ -43,6 +43,14 @@ type RegistrationRepository interface {
 	Save(ctx context.Context, value registration.Registration, expectedVersion int64) error
 	ListForEvent(ctx context.Context, eventID string) ([]registration.Registration, error)
 	Promote(ctx context.Context, eventID string) error
+	// Reserve atomically admits a new registration against the event's
+	// capacity. The check-then-act sequence (count active registrations,
+	// decide registered vs. waitlisted, assign a position, persist) runs as a
+	// single critical section so that concurrent registrations never oversell
+	// the last seat or hand out colliding waitlist positions. A user with an
+	// existing non-cancelled registration is rejected. expectedVersion is the
+	// optimistic version the caller holds (0 for a brand-new row).
+	Reserve(ctx context.Context, value registration.Registration, capacity int, expectedVersion int64) (registration.Registration, error)
 }
 type AuditRepository interface {
 	Append(ctx context.Context, entry audit.Entry) error

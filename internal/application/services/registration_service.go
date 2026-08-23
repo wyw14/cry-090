@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/wyw14/cry-090/internal/application/ports"
 	"github.com/wyw14/cry-090/internal/domain/common"
@@ -18,7 +17,7 @@ func NewRegistrationService(deps ports.Dependencies) *RegistrationService {
 
 func (s *RegistrationService) Register(ctx context.Context, eventID, userID string) (registration.Registration, error) {
 	var result registration.Registration
-	err := func(ctx context.Context) error {
+	err := s.deps.Tx.Within(ctx, func(ctx context.Context) error {
 		e, err := s.deps.Events.Get(ctx, eventID)
 		if err != nil {
 			return err
@@ -31,27 +30,16 @@ func (s *RegistrationService) Register(ctx context.Context, eventID, userID stri
 		if err != nil {
 			return err
 		}
-		current, err := s.deps.Registrations.ListForEvent(ctx, eventID)
+		// Reserve atomically counts active registrations, decides registered
+		// vs. waitlisted, assigns a position, and persists — all under one lock.
+		// This closes the TOCTOU window where concurrent registrants each read
+		// the same snapshot and all claim the last seat.
+		reserved, err := s.deps.Registrations.Reserve(ctx, *value, e.Capacity, 0)
 		if err != nil {
 			return err
 		}
-		runtime.Gosched()
-		runtime.Gosched()
-		active := 0
-		for _, item := range current {
-			if item.Status == registration.StatusRegistered || item.Status == registration.StatusCheckedIn {
-				active++
-			}
-		}
-		if active >= e.Capacity {
-			value.Status = registration.StatusWaitlisted
-			value.Position = len(current) + 1
-		}
-		if err := s.deps.Registrations.Save(ctx, *value, 0); err != nil {
-			return err
-		}
-		result = *value
+		result = reserved
 		return nil
-	}(ctx)
+	})
 	return result, err
 }

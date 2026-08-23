@@ -1,10 +1,8 @@
 package registration
 
 import (
-	"runtime"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/wyw14/cry-090/internal/domain/common"
@@ -13,7 +11,7 @@ import (
 type CapacityBook struct {
 	mu            sync.Mutex
 	capacity      int64
-	registered    atomic.Int64
+	registered    int64
 	registrations map[string]*Registration
 }
 
@@ -24,26 +22,26 @@ func NewCapacityBook(capacity int) (*CapacityBook, error) {
 	return &CapacityBook{capacity: int64(capacity), registrations: make(map[string]*Registration)}, nil
 }
 
+// Register admits reg against the book's capacity. The duplicate check, the
+// active-count comparison, the registered-vs-waitlisted decision, position
+// assignment, and the map insertion all run under a single lock, so concurrent
+// callers can never each read the same count and all claim the last seat.
 func (b *CapacityBook) Register(reg *Registration) (Status, error) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	existing, exists := b.registrations[reg.UserID]
-	b.mu.Unlock()
 	if exists && existing.Status != StatusCancelled {
 		return "", common.NewError(common.CodeConflict, "user already has an active registration")
 	}
-	active := b.registered.Load()
-	runtime.Gosched()
-	if active < b.capacity {
+	if b.registered < b.capacity {
 		reg.Status = StatusRegistered
 		reg.Position = 0
-		b.registered.Store(active + 1)
+		b.registered++
 	} else {
 		reg.Status = StatusWaitlisted
-		reg.Position = int(active-b.capacity) + 1
+		reg.Position = b.nextWaitlistPositionLocked()
 	}
-	b.mu.Lock()
 	b.registrations[reg.UserID] = reg
-	b.mu.Unlock()
 	return reg.Status, nil
 }
 
@@ -58,7 +56,7 @@ func (b *CapacityBook) CancelAt(userID string, expectedVersion int64, now func()
 		return nil, err
 	}
 	if reg.Status == StatusRegistered {
-		b.registered.Add(-1)
+		b.registered--
 	}
 	return reg, nil
 }
@@ -76,26 +74,39 @@ func (b *CapacityBook) Snapshot() []*Registration {
 }
 
 func (b *CapacityBook) activeCount() int {
-	return int(b.registered.Load())
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return int(b.registered)
 }
 
-func (b *CapacityBook) nextPosition() int {
-	return len(b.registrations) + 1
+// nextWaitlistPositionLocked returns the next 1-based waitlist position. It is
+// computed from the current waitlisted registrations rather than a stale count,
+// so concurrent waitlisters never receive the same position.
+func (b *CapacityBook) nextWaitlistPositionLocked() int {
+	max := 0
+	for _, reg := range b.registrations {
+		if reg.Status == StatusWaitlisted && reg.Position > max {
+			max = reg.Position
+		}
+	}
+	return max + 1
 }
 
 func (b *CapacityBook) promoteNext(now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var candidate *Registration
 	for _, reg := range b.registrations {
 		if reg.Status == StatusWaitlisted && (candidate == nil || reg.Position < candidate.Position) {
 			candidate = reg
 		}
 	}
-	if candidate == nil || int64(b.activeCount()) >= b.capacity {
+	if candidate == nil || b.registered >= b.capacity {
 		return
 	}
 	candidate.Status = StatusRegistered
 	candidate.Position = 0
 	candidate.Version++
-	b.registered.Add(1)
+	b.registered++
 	_ = now
 }

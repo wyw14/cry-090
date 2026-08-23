@@ -74,6 +74,9 @@ func (r registrationRepo) Save(c context.Context, v registration.Registration, e
 func (r registrationRepo) ListForEvent(c context.Context, id string) ([]registration.Registration, error) {
 	return r.s.ListRegistrations(c, id)
 }
+func (r registrationRepo) Reserve(c context.Context, v registration.Registration, capacity int, e int64) (registration.Registration, error) {
+	return r.s.Reserve(c, v, capacity, e)
+}
 func (r registrationRepo) Promote(c context.Context, id string) error { return r.s.Promote(c, id) }
 
 type auditRepo struct{ s *Store }

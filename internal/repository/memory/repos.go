@@ -163,6 +163,51 @@ func (s *Store) SaveRegistration(_ context.Context, v registration.Registration,
 	s.Registrations[key] = v
 	return nil
 }
+
+// Reserve atomically admits value against capacity. The check-then-act
+// sequence — reject duplicates, count active registrations, decide registered
+// vs. waitlisted, assign a position, and persist — runs entirely under the
+// store lock so concurrent reservations can never oversell the last seat or
+// hand out colliding waitlist positions.
+func (s *Store) Reserve(_ context.Context, value registration.Registration, capacity int, expectedVersion int64) (registration.Registration, error) {
+	if capacity < 1 {
+		return registration.Registration{}, common.FieldError("capacity", "must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := value.EventID + ":" + value.UserID
+	if existing, ok := s.Registrations[key]; ok && existing.Status != registration.StatusCancelled {
+		return registration.Registration{}, common.NewError(common.CodeConflict, "user already has an active registration")
+	}
+	if old, ok := s.Registrations[key]; ok && expectedVersion != 0 && old.Version != expectedVersion {
+		return registration.Registration{}, common.NewError(common.CodeVersionConflict, "registration version conflict")
+	}
+
+	active := 0
+	waitlisted := 0
+	for _, reg := range s.Registrations {
+		if reg.EventID != value.EventID {
+			continue
+		}
+		switch reg.Status {
+		case registration.StatusRegistered, registration.StatusCheckedIn:
+			active++
+		case registration.StatusWaitlisted:
+			waitlisted++
+		}
+	}
+
+	if active < capacity {
+		value.Status = registration.StatusRegistered
+		value.Position = 0
+	} else {
+		value.Status = registration.StatusWaitlisted
+		value.Position = waitlisted + 1
+	}
+	s.Registrations[key] = value
+	return value, nil
+}
 func (s *Store) ListRegistrations(_ context.Context, eventID string) ([]registration.Registration, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
