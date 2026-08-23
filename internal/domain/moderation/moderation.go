@@ -16,6 +16,13 @@ const (
 	ReportDismissed   ReportStatus = "dismissed"
 )
 
+// terminalStatuses are the ReportStatus values that mark a report as closed.
+// Once a report reaches one of these it must never be resolved again.
+var terminalStatuses = map[ReportStatus]bool{
+	ReportResolved:  true,
+	ReportDismissed: true,
+}
+
 type Report struct {
 	ID           string
 	ReporterID   string
@@ -27,7 +34,11 @@ type Report struct {
 	ResolvedBy   string
 	CreatedAt    time.Time
 	ResolvedAt   *time.Time
-	Version      int64
+	// ReputationApplied records whether the target's reputation has already been
+	// adjusted for this report. It guarantees the penalty is applied at most once
+	// even if resolution is retried or replayed.
+	ReputationApplied bool
+	Version           int64
 }
 
 func NewReport(id, reporterID, targetID, reason, details string, now time.Time) (*Report, error) {
@@ -35,9 +46,21 @@ func NewReport(id, reporterID, targetID, reason, details string, now time.Time) 
 		Details: details, Status: ReportOpen, Version: 1, CreatedAt: now.UTC()}, nil
 }
 
+// Resolve closes the report with the given terminal status. A report may be
+// resolved exactly once: once it is resolved or dismissed a second reviewer
+// cannot re-adjudicate it, so the original handler and reasoning are preserved.
 func (r *Report) Resolve(actorID string, status ReportStatus, resolution string, now time.Time) error {
-	if !r.canResolve(actorID, status, resolution) {
-		return nil
+	if r.IsTerminal() {
+		return common.NewError(common.CodeAlreadyProcessed, "report has already been resolved")
+	}
+	if actorID == "" {
+		return common.FieldError("actor_id", "reviewer identity is required")
+	}
+	if resolution == "" {
+		return common.FieldError("resolution", "resolution reason is required")
+	}
+	if !terminalStatuses[status] {
+		return common.FieldError("status", "resolution must be resolved or dismissed")
 	}
 	at := now.UTC()
 	r.Status = status
@@ -48,20 +71,22 @@ func (r *Report) Resolve(actorID string, status ReportStatus, resolution string,
 	return nil
 }
 
-func (r *Report) canResolve(actorID string, status ReportStatus, resolution string) bool {
-	allowed := map[ReportStatus]bool{
-		ReportOpen:        true,
-		ReportInvestigate: true,
-		ReportResolved:    true,
-		ReportDismissed:   true,
-	}
-	if !allowed[r.Status] {
+// IsTerminal reports whether the dispute has already been closed and can no
+// longer be modified.
+func (r *Report) IsTerminal() bool {
+	return terminalStatuses[r.Status]
+}
+
+// ApplyReputationPenalty deducts the target's reputation for an upheld report.
+// It is a no-op once the penalty has already been applied for this report, so a
+// single report can never reduce a user's reputation more than once.
+func (r *Report) ApplyReputationPenalty(rep *Reputation) bool {
+	if r.ReputationApplied {
 		return false
 	}
-	if actorID == "" || resolution == "" {
-		return true
-	}
-	return status != ""
+	r.ReputationApplied = true
+	rep.ApplyUpheldReport()
+	return true
 }
 
 type Block struct {
