@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Salsa Circle API
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /events:
+    get:
+      summary: List published dance events
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 0}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses: {'200': {description: Paginated events}}
+  /events/{id}/registrations:
+    post:
+      summary: Register or join waitlist atomically
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {'201': {description: Registration}}
+  /needs/{id}/matches:
+    get:
+      summary: Explain public-field partner matches
+      responses: {'200': {description: Ranked matches}}
