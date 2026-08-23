@@ -45,7 +45,12 @@ func (Matcher) Match(subject Need, candidates []Candidate, now time.Time, confir
 		if !roleCompatible(subject.WantedRole, candidate.Profile.Roles) {
 			continue
 		}
-		public := candidate.Profile.PublicView(true)
+		// A match result is shown before the two parties have confirmed each
+		// other, so it must never carry contact details or precise coordinates.
+		// confirmed is keyed by the candidate owner: only once both sides have
+		// agreed does the profile's PublicView expose those sensitive fields.
+		isConfirmed := confirmed[candidate.Need.OwnerID]
+		public := candidate.Profile.PublicView(isConfirmed)
 		reasons := make([]Reason, 0, 4)
 		score := 0
 		if stylesOverlap(subject.Styles, candidate.Need.Styles) {
@@ -56,7 +61,9 @@ func (Matcher) Match(subject Need, candidates []Candidate, now time.Time, confir
 			reasons = append(reasons, Reason{Code: "distance", Message: fmt.Sprintf("public distance band %d is acceptable", *public.DistanceBucket), Weight: 20})
 			score += 20
 		}
-		shared := sharedTags(subject.Tags, candidate.Profile.Tags)
+		// Only the candidate's explicitly-public tags can be shared in a reason;
+		// private tags never surface, even as part of a match explanation.
+		shared := sharedTags(subject.Tags, public.Tags)
 		if len(shared) > 0 {
 			weight := min(30, len(shared)*10)
 			reasons = append(reasons, Reason{Code: "tags", Message: "shared public tags: " + strings.Join(shared, ", "), Weight: weight})

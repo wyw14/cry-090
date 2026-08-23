@@ -112,24 +112,48 @@ func (p *Profile) SetPublicFields(fields []PublicField, expectedVersion int64, n
 	return nil
 }
 
+// PublicView projects the profile into a disclosure-safe view.
+//
+// Contact details and precise coordinates are private until the two parties have
+// mutually confirmed a match — they are only included when confirmed is true.
+// The remaining profile attributes (bio, dance years, roles, styles, tags and
+// distance bucket) are gated by the owner's PublicFields opt-in map so that a
+// member who set, say, dance years or tags to private never sees them surfaced
+// in a match result. Display name is always visible so that matches remain
+// human-readable; everything else requires an explicit opt-in.
 func (p Profile) PublicView(confirmed bool) PublicProfile {
 	view := PublicProfile{
 		UserID:      p.UserID,
 		DisplayName: p.DisplayName,
-		Bio:         p.Bio,
-		Roles:       append([]DanceRole(nil), p.Roles...),
-		Styles:      sortedStrings(p.Styles),
-		Tags:        sortedStrings(p.Tags),
-		Contact:     p.Contact,
 	}
-	danceYears := p.DanceYears
-	distanceBucket := p.DistanceBucket
-	latitude := p.PreciseLatitude
-	longitude := p.PreciseLongitude
-	view.DanceYears = &danceYears
-	view.DistanceBucket = &distanceBucket
-	view.Latitude = &latitude
-	view.Longitude = &longitude
+	isPublic := func(field PublicField) bool { return p.PublicFields[field] }
+	if isPublic(FieldBio) {
+		view.Bio = p.Bio
+	}
+	if isPublic(FieldRoles) {
+		view.Roles = append([]DanceRole(nil), p.Roles...)
+	}
+	if isPublic(FieldStyles) {
+		view.Styles = sortedStrings(p.Styles)
+	}
+	if isPublic(FieldTags) {
+		view.Tags = sortedStrings(p.Tags)
+	}
+	if isPublic(FieldDanceYears) {
+		danceYears := p.DanceYears
+		view.DanceYears = &danceYears
+	}
+	if isPublic(FieldDistance) {
+		distanceBucket := p.DistanceBucket
+		view.DistanceBucket = &distanceBucket
+	}
+	if confirmed {
+		view.Contact = p.Contact
+		latitude := p.PreciseLatitude
+		longitude := p.PreciseLongitude
+		view.Latitude = &latitude
+		view.Longitude = &longitude
+	}
 	return view
 }
 
