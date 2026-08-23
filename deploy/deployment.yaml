@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: salsa-circle}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: salsa-circle}}
+  template:
+    metadata: {labels: {app: salsa-circle}}
+    spec:
+      securityContext: {runAsNonRoot: true}
+      containers:
+        - name: app
+          image: salsa-circle:latest
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /readyz, port: 8080}}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}}
